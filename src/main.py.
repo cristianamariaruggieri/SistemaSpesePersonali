@@ -1,0 +1,173 @@
+import sqlite3
+from datetime import datetime
+
+# --- 1. CONFIGURAZIONE E INIZIALIZZAZIONE DB ---
+def inizializza_db():
+    conn = sqlite3.connect('database_esame.db')
+    cursor = conn.cursor()
+    
+    # ATTIVA i vincoli SQL (fondamentale per l'esame!)
+    cursor.execute('PRAGMA foreign_keys = ON')
+    
+    # Creazione Tabella Categorie
+    cursor.execute('''CREATE TABLE IF NOT EXISTS Categorie (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT UNIQUE NOT NULL
+    )''')
+    
+    # Creazione Tabella Spese (con vincolo CHECK per importi positivi)
+    cursor.execute('''CREATE TABLE IF NOT EXISTS Spese (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        importo REAL NOT NULL CHECK(importo > 0),
+        descrizione TEXT,
+        data TEXT NOT NULL,
+        categoria_id INTEGER NOT NULL,
+        FOREIGN KEY(categoria_id) REFERENCES Categorie(id)
+    )''')
+    
+    # Creazione Tabella Budget
+    cursor.execute('''CREATE TABLE IF NOT EXISTS Budget (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        mese TEXT NOT NULL, 
+        limite REAL NOT NULL CHECK(limite > 0),
+        categoria_id INTEGER NOT NULL,
+        UNIQUE(mese, categoria_id),
+        FOREIGN KEY(categoria_id) REFERENCES Categorie(id)
+    )''')
+    
+    conn.commit()
+    conn.close()
+
+# --- 2. FUNZIONI OPERATIVE ---
+
+def aggiungi_categoria():
+    nome = input("\nNome nuova categoria: ").strip()
+    if not nome: return
+    conn = sqlite3.connect('database_esame.db')
+    try:
+        conn.execute("INSERT INTO Categorie (nome) VALUES (?)", (nome,))
+        conn.commit()
+        print(f"Categoria '{nome}' aggiunta con successo!")
+    except sqlite3.IntegrityError:
+        print("Errore: Questa categoria esiste già.")
+    finally: conn.close()
+
+def aggiungi_spesa():
+    conn = sqlite3.connect('database_esame.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM Categorie")
+    cats = cursor.fetchall()
+    
+    if not cats:
+        print("\n[!] Devi prima creare almeno una categoria!")
+        return
+
+    print("\n--- Seleziona Categoria ---")
+    for c in cats: print(f"ID {c[0]}: {c[1]}")
+    
+    try:
+        c_id = int(input("Inserisci ID Categoria: "))
+        imp = float(input("Importo spesa: "))
+        
+        # Doppia protezione: Controllo Python + Vincolo SQL
+        if imp <= 0:
+            print("\n[ERRORE] L'importo deve essere maggiore di zero!")
+            return
+
+        desc = input("Descrizione breve: ")
+        data = datetime.now().strftime("%Y-%m-%d")
+        
+        cursor.execute("INSERT INTO Spese (importo, descrizione, data, categoria_id) VALUES (?, ?, ?, ?)",
+                       (imp, desc, data, c_id))
+        conn.commit()
+        print("Spesa registrata correttamente!")
+        
+    except sqlite3.IntegrityError:
+        print("\n[ERRORE SQL] Il database ha rifiutato l'operazione (CHECK constraint failed).")
+    except ValueError:
+        print("\n[ERRORE] Inserisci un numero valido per l'importo.")
+    finally: conn.close()
+
+def imposta_budget():
+    conn = sqlite3.connect('database_esame.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM Categorie")
+    cats = cursor.fetchall()
+    
+    if not cats:
+        print("\n[!] Crea prima una categoria!")
+        return
+
+    print("\n--- Imposta Budget Mensile ---")
+    for c in cats: print(f"ID {c[0]}: {c[1]}")
+        
+    try:
+        c_id = int(input("ID Categoria: "))
+        mese = input("Mese (formato YYYY-MM, es. 2026-04): ")
+        limite = float(input("Limite di spesa: "))
+        
+        if limite <= 0:
+            print("[ERRORE] Il budget deve essere positivo!")
+            return
+
+        cursor.execute("INSERT OR REPLACE INTO Budget (mese, limite, categoria_id) VALUES (?, ?, ?)",
+                       (mese, limite, c_id))
+        conn.commit()
+        print("Budget aggiornato!")
+    except Exception as e:
+        print(f"Errore: {e}")
+    finally: conn.close()
+
+def visualizza_report():
+    conn = sqlite3.connect('database_esame.db')
+    cursor = conn.cursor()
+    
+    # Query SQL avanzata con JOIN e SUM
+    query = '''
+        SELECT C.nome, IFNULL(B.limite, 0), IFNULL(SUM(S.importo), 0)
+        FROM Categorie C
+        LEFT JOIN Budget B ON C.id = B.categoria_id
+        LEFT JOIN Spese S ON C.id = S.categoria_id
+        GROUP BY C.nome
+    '''
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    
+    print("\n" + "="*55)
+    print(f"{'CATEGORIA':<15} | {'SPESO':<8} | {'BUDGET':<8} | {'STATO'}")
+    print("-"*55)
+    for r in rows:
+        nome, bud, spesa = r[0], r[1], r[2]
+        if bud == 0:
+            stato = "N/D"
+        else:
+            stato = "OK" if spesa <= bud else "!! OVER !!"
+        print(f"{nome:<15} | {spesa:<8.2f} | {bud:<8.2f} | {stato}")
+    print("="*55)
+    conn.close()
+
+# --- 3. MENU PRINCIPALE ---
+def main():
+    inizializza_db()
+    while True:
+        print("\n===== GESTORE SPESE PERSONALI =====")
+        print("1. Aggiungi Categoria")
+        print("2. Inserisci Spesa")
+        print("3. Imposta Budget Mensile")
+        print("4. Visualizza Report (Spese vs Budget)")
+        print("5. Esci")
+        
+        scelta = input("\nScegli un'opzione: ")
+        
+        if scelta == "1": aggiungi_categoria()
+        elif scelta == "2": aggiungi_spesa()
+        elif scelta == "3": imposta_budget()
+        elif scelta == "4": visualizza_report()
+        elif scelta == "5": 
+            print("Chiusura programma...")
+            break
+        else: 
+            print("Opzione non valida, riprova.")
+
+if __name__ == "__main__":
+    main()
